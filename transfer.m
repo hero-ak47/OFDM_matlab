@@ -1,51 +1,37 @@
-% ofdm_transmit.m
-% OFDM Transmitter - bỏ GUI, chạy trực tiếp từ script
-% Tác giả gốc: Nguyen Quoc Khuong - HUST
-% Tối ưu: script độc lập, có thể chỉnh tham số dễ dàng
+% % ofdm_transmit_optimized.m
+clear; clc; close all;
 
-clear; clc;
+%% ========== THAM SỐ HỆ THỐNG (CẤU HÌNH CỐ ĐỊNH 4 SUBCARRIERS) ==========
+fs          = 48000;    
+NFFT        = 256;      
+GI          = 128;      
+f1          = 7000;     % Tần số trung tâm bắt đầu dải khống chế
+M_ary       = 2;        % BPSK
+D_f         = 4;        % Khớp với cấu hình 4 subcarriers (1 Pilot + 3 Data)
+Num_Sym     = 180;       
+OP          = 1.5;      
+sub_pwr     = 2;        
+FEC_enable  = false;    
+sin_len     = 0.25;      
 
-%% ========== THAM SỐ HỆ THỐNG ==========
-fs          = 96000;    % Sample rate (Hz)
-NFFT        = 256;      % Kích thước FFT
-GI          = 64;       % Guard Interval (Cyclic Prefix)
-f1          = 3000;     % Tần số subcarrier thấp nhất (Hz)
-f2          = 12000;    % Tần số subcarrier cao nhất (Hz)
-M_ary       = 4;        % Bậc QAM (4=QPSK, 16, 64...)
-D_f         = 5;        % Khoảng cách pilot (1 pilot / D_f subcarrier)
-Num_Sym     = 40;       % Số OFDM symbol mỗi frame
-super_frame = 4;        % Số frame
-OP          = 1.6;      % Hệ số khuếch đại
-sub_pwr     = 6;        % Công suất pilot
-FEC_enable  = false;    % Bật/tắt FEC (convolutional code rate 1/2)
-sin_len     = 1;        % Độ dài noise đệm giữa các frame (x fs)
+input_text  = 'Ra di mang nang loi the, chua thang giac My chua ve Bach Khoa';
 
-input_text  = 'Hello OFDM World! Testing transmission via sound card.';
-
-%% ========== TÍNH TOÁN SUBCARRIER ==========
+%% ========== TÍNH TOÁN CỐ ĐỊNH CHÍNH XÁC 4 SUBCARRIER ==========
+% Tính chỉ số bắt đầu dựa trên f1
 SubL = floor(2 * f1 * NFFT / fs);
 SubL = SubL - mod(SubL, 2);
-SubH = ceil(2 * f2 * NFFT / fs);
-SubH = SubH + mod(SubH, 2);
-N_D  = SubH - SubL + 1;
 
-% Căn chỉnh N_D chia hết cho D_f
-if mod(N_D, D_f) ~= 0
-    SubH = SubH + D_f - mod(N_D, D_f);
-    N_D  = SubH - SubL + 1;
-end
+% ÉP BUỘC ĐỘ RỘNG: Chỉ cho phép chạy đúng 4 subcarriers hoạt động
+N_D  = 4; 
+SubH = SubL + N_D - 1; 
 
-fprintf('SubL=%d, SubH=%d, N_D=%d, Subcarriers dữ liệu/symbol=%d\n', ...
-        SubL, SubH, N_D, floor(N_D/D_f)*(D_f-1));
+% Số lượng subcarrier thực tế dùng cho data trên mỗi Symbol
+N_data_per_sym = floor(N_D/D_f) * (D_f - 1); % = 3 Data subcarriers
+fprintf('CẤU HÌNH SIÊU HẸP: SubL=%d, SubH=%d, Số subcarrier hoạt động=%d, Data/Symbol=%d\n', ...
+        SubL, SubH, N_D, N_data_per_sym);
 
 %% ========== PILOT SEQUENCE ==========
-switch NFFT
-    case 64
-        Pilot_base = [1 1 1 -1 -1 -1 -1 -1 1 1 -1 -1 1 -1 -1 1 1 -1 ...
-                     -1 -1 1 1 -1 1 0 -1 1 -1 1 -1 1 1 1 -1 1 -1 -1 ...
-                      1 -1 1 1 -1 -1 -1 1 -1 1 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0];
-    case 256
-        Pilot_base = [ 1 1 -1 1 1 1 -1 -1 -1 1 1 -1 1 1 -1 1 -1 -1 -1 1 -1 ...
+Pilot_base = [ 1 1 -1 1 1 1 -1 -1 -1 1 1 -1 1 1 -1 1 -1 -1 -1 1 -1 ...
             -1 -1 -1 -1 1 1 -1 1 1 1 1 -1 -1 1 1 -1 1 -1 -1 1 1 ...
              1 -1 1 1 1 1 1 1 -1 -1 1 -1 1 1 -1 -1 1 -1 1 -1 -1 ...
             -1 -1 -1 1 1 -1 1 -1 -1 -1 1 1 1 -1 1 -1 -1 1 1 1 1 ...
@@ -58,70 +44,48 @@ switch NFFT
              1 1 -1 -1 1 -1 -1 -1 -1 -1 -1 -1 1 1 1 1 1 1 1 -1 -1 ...
             -1 -1 -1 1 1 -1 1 -1 -1 -1 1 1 -1 -1 -1 1 1 -1 1 1 -1 ...
              1 1 -1 1];
-    otherwise
-        error('NFFT=%d: cần load pilot từ file .mat', NFFT);
-end
-
-% Tạo pilot mask và scale
 pilot_mask = [zeros(1, SubL-1), ones(1, N_D), zeros(1, NFFT - SubH)];
-Pilot = sqrt(2*(M_ary-1)/3) * Pilot_base .* pilot_mask;
+Pilot = sqrt(2*(M_ary-1)/3 + 1e-6) * Pilot_base .* pilot_mask; 
 
-%% ========== CHUẨN BỊ DỮ LIỆU ==========
-% Đọc text → bytes → bits
+%% ========== CHUẨN BỊ DỮ LIỆU & ĐỒNG BỘ ==========
 y_bytes = double(uint8(input_text))';
 y_bits  = de2bi(y_bytes, 8, 'left-msb')';
 Data_bits = y_bits(:);
 
-% FEC (tùy chọn)
-FEC_code = poly2trellis(3, [7 5]);
+NoS     = Num_Sym * N_data_per_sym;
+NoBit_data = NoS * log2(M_ary);
 
-% Số bit/symbol
-NoS     = Num_Sym * floor(N_D/D_f) * (D_f-1);
-NoBit   = NoS * log2(M_ary);
-if FEC_enable
-    NoBit_data = floor(NoBit / 2);  % rate 1/2
-else
-    NoBit_data = NoBit;
+rem_bits = mod(length(Data_bits), NoBit_data);
+if rem_bits ~= 0
+    Data_bits = [Data_bits; zeros(NoBit_data - rem_bits, 1)];
 end
+super_frame = length(Data_bits) / NoBit_data;
+fprintf('Tổng số Frame phát: %d | Tổng số bits (đã padding): %d\n', super_frame, length(Data_bits));
 
-% Tính số frame thực tế từ dữ liệu
-super_frame = floor(length(Data_bits) / NoBit_data);
-if super_frame < 1
-    % Nếu text ngắn hơn 1 frame: padding
-    Data_bits = [Data_bits; zeros(NoBit_data - length(Data_bits), 1)];
-    super_frame = 1;
-end
-fprintf('Số frame: %d, Bit/frame: %d\n', super_frame, NoBit_data);
+%% TẠO XUNG ĐỒNG BỘ CHỚP (LFM PREAMBLE)
+% Để quét tần số mượt mà, xung Chirp sẽ quét trong phạm vi thực tế của 4 subcarriers này
+f_start_chirp = f1;
+f_end_chirp   = ceil(SubH * fs / (2 * NFFT)); 
+t_chirp = 0 : 1/fs : 0.04; 
+preamble_chirp = chirp(t_chirp, f_start_chirp, t_chirp(end), f_end_chirp, 'linear');
+win = raised_cosine_window(length(preamble_chirp));
+preamble_chirp = preamble_chirp .* win * 0.07;
 
-%% ========== OFDM MODULATION ==========
-% Noise padding giữa frame
-pad_noise = randn(1, sin_len * fs) / 10000;
+%% ========== OFDM MODULATION LOOP ==========
+pad_noise = zeros(1, floor(sin_len * fs)); 
 
-tx_signal = [];
-
+tx_signal = [pad_noise, preamble_chirp, pad_noise]; 
 for frame = 1:super_frame
-    %--- Lấy bits của frame này ---
     bits_frame = Data_bits((frame-1)*NoBit_data + 1 : frame*NoBit_data);
     
-    %--- FEC encode ---
-    if FEC_enable
-        bits_frame = convenc(bits_frame', FEC_code)';
-    end
-    
-    %--- Bit → symbol index ---
     bits_mat = reshape(bits_frame, log2(M_ary), [])';
     sym_idx  = bi2de(bits_mat, 'left-msb');
     
-    %--- QAM modulate ---
-    qam_syms = qammod(sym_idx, M_ary);          % NoS x 1
-    
-    %--- Reshape: (N_data_per_sym x Num_Sym) ---
-    N_data_per_sym = floor(N_D/D_f) * (D_f-1);
+    qam_syms = qammod(sym_idx, M_ary);
     data_mat = reshape(qam_syms, N_data_per_sym, Num_Sym);
     
-    %--- Gán pilot frame (pilot xen kẽ data) ---
     Pilot_temp = Pilot;
-    Pilot_temp(SubL) = sub_pwr;                  % pilot đồng bộ frame
+    Pilot_temp(SubL) = sub_pwr; 
     Pilot_frame = repmat(Pilot_temp', 1, Num_Sym);
     
     for i = 1:floor(N_D/D_f)
@@ -130,57 +94,49 @@ for frame = 1:super_frame
         Pilot_frame(idx_freq, :) = data_mat(idx_data, :);
     end
     
-    %--- IFFT (real-valued output trick) ---
-    dataP = Pilot_frame';                        % Num_Sym x NFFT
+    dataP = Pilot_frame'; 
     frame_td = zeros(Num_Sym, 2*NFFT);
     for s = 1:Num_Sym
-        frame_td(s,:) = ifft([0, dataP(s,:), fliplr(conj(dataP(s,:)))]);
+        frame_td(s,:) = ifft([0, dataP(s,:), fliplr(conj(dataP(s, 1:NFFT-1)))]);
     end
     
-    %--- Thêm Cyclic Prefix ---
     cp_part   = frame_td(:, end-GI+1:end);
-    frame_cp  = [cp_part, frame_td];             % Num_Sym x (2*NFFT + GI)
+    frame_cp  = [cp_part, frame_td]; 
     
-    %--- Ghép thành vector 1D ---
     frame_vec = real(frame_cp');
     frame_vec = frame_vec(:)';
     
     tx_signal = [tx_signal, frame_vec, pad_noise];
 end
 
-%% ========== NORMALIZE & SCALE ==========
-scale = OP * 2 * NFFT / N_D / sqrt(2*(M_ary-1)/3);
-tx_signal = scale * tx_signal;
+%% ========== NORMALIZE & AMPLITUDE SCALE ==========
+tx_signal = tx_signal / max(abs(tx_signal));
+tx_signal = tx_signal * OP * 0.5; 
+tx_signal = max(min(tx_signal, 1), -1); 
 
-% Clipping để tránh clipping trên DAC
-tx_signal = max(min(tx_signal, 1), -1);
-
-%% ========== PHÁT QUA SOUND CARD ==========
+%% ========== HIỂN THỊ VÀ PHÁT AUDIO ==========
 fprintf('Thời gian phát: %.2f giây\n', length(tx_signal)/fs);
-fprintf('Đang phát...\n');
-
-% Lưu file wav (để kiểm tra hoặc phát lại)
-audiowrite('ofdm_tx.wav', tx_signal, fs);
-
-% Phát trực tiếp
 sound(tx_signal, fs);
 
-%% ========== VẼ ĐỒ THỊ KIỂM TRA ==========
-figure('Name', 'OFDM TX Signal');
+%% ========== ĐỒ THỊ KIỂM TRA ==========
+figure('Name', 'Hệ Thống OFDM Phát Thực Tế - 4 Subcarriers');
+subplot(2,1,1); t = (0:length(tx_signal)-1) / fs; plot(t, tx_signal);
+xlabel('Thời gian (s)'); ylabel('Biên độ'); grid on;
+subplot(2,1,2); N_fft_plot = 2^nextpow2(length(tx_signal)); Xf = abs(fft(tx_signal, N_fft_plot));
+f_axis = (0:N_fft_plot/2-1) * fs / N_fft_plot; plot(f_axis/1000, 20*log10(Xf(1:N_fft_plot/2) + 1e-10));
+xlabel('Tần số (kHz)'); ylabel('Biên độ (dB)'); xlim([0 fs/2/1000]); grid on;
 
-subplot(2,1,1);
-t = (0:length(tx_signal)-1) / fs;
-plot(t(1:min(end, 4*(2*NFFT+GI)*Num_Sym)), ...
-     tx_signal(1:min(end, 4*(2*NFFT+GI)*Num_Sym)));
-xlabel('Thời gian (s)'); ylabel('Biên độ');
-title('Tín hiệu OFDM miền thời gian (4 frame đầu)');
-grid on;
-
-subplot(2,1,2);
-N_fft_plot = 2^nextpow2(length(tx_signal));
-Xf = abs(fft(tx_signal, N_fft_plot));
-f_axis = (0:N_fft_plot/2-1) * fs / N_fft_plot;
-plot(f_axis/1000, 20*log10(Xf(1:N_fft_plot/2) + 1e-10));
-xlabel('Tần số (kHz)'); ylabel('Biên độ (dB)');
-title(sprintf('Phổ tín hiệu OFDM | f1=%.0fHz, f2=%.0fHz', f1, f2));
-xlim([0 fs/2/1000]); grid on;
+function w = raised_cosine_window(L)
+    % Tạo cửa sổ vát cạnh giúp tín hiệu không bật đột ngột gây sốc loa
+    N = L - 1; w = zeros(L, 1); alpha = 0.1; 
+    for idx = 0:N
+        if idx < alpha*N/2
+            w(idx+1) = 0.5 * (1 + cos(pi * (idx - alpha*N/2) / (alpha*N/2)));
+        elseif idx > N - alpha*N/2
+            w(idx+1) = 0.5 * (1 + cos(pi * (idx - N + alpha*N/2) / (alpha*N/2)));
+        else
+            w(idx+1) = 1;
+        end
+    end
+    w = w';
+end
